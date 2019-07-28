@@ -1,0 +1,36 @@
+#!/usr/bin/env perl6
+
+use lib 'lib';
+
+use Test;
+
+use Async::Timeouts;
+
+is Retry.new.basis, 2, "Retry basis default";
+
+sub validate_pauses($retry, $mode, @seq) {
+    for @seq.kv -> $i, $expect {
+        is $retry.pause, $expect, "$mode pause step $i == $expect";
+    }
+}
+
+sub test_pause_mode($mode, $expect, *%args) {
+    my $r = Retry.new(:mode(::("RetryMode::$mode")), |%args);
+    validate_pauses($r, $mode, $expect)
+}
+
+test_pause_mode('constant', [2,2,2,2]);
+test_pause_mode('linear', [3,6,9], :basis<3>);
+test_pause_mode('exponential', [2, 4, 8, 16, 32]);
+test_pause_mode('polynomial', [1, 4, 9, 16, 25]);
+test_pause_mode('fibonacci', [1, 1, 2, 3, 5, 8]);
+my @sequence = 9,8,7,6,5;
+test_pause_mode('custom', @sequence, :@sequence);
+
+my $retry = Retry.new(:mode(RetryMode::exponential));
+
+is $retry.Seq[1], 4, "Seq gives corect results";
+is $retry.gist, "'exponential Retry' basis=2, elapsed=2, last=4", "gist";
+is $retry.Int, 8, "Int gives next pause as Int";
+is $retry.elapsed, 6, "Elapsed time (cumaltive prior pauses)";
+is $retry.Num, Num.new(16), "Num gives next pause as Num";
