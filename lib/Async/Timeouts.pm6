@@ -120,35 +120,73 @@ class Retry is export {
     #= sleep self.pause seconds
     method sleep(Retry:D:) { sleep self.pause }
 
+    #= Given a pause return value, does it represent a retry limit?
+    method ran-out($value) {
+        $value ~~ Failure and $value.exception ~~ X::RetryLimit;
+    }
+
     method gist() {
         "'{self.mode} {self.WHAT.perl}' basis=$!basis, elapsed=$!elapsed, last=$!last"
     }
 }
 
-class Timeout is Promise is export {
-    has Retry $.retry = Nil;
-    has $.timeout = 1;
-    has $.subpromise = Nil;
+class Timeout is export {
+    has Retry $.retry;
+    has $.timeout;
+    has $.signal;
+    has &.code;
 
-    submethod BUILD(&code, :$!retry, :$!timeout) {
-        $!subpromise = ...
+    multi method new(&code, :$retry is copy, :$timeout=1, :$signal='HUP') {
+        if $retry ~~ Retry {
+            # Nothing to do
+        } elsif not $retry {
+            $retry = Retry;
+        } elsif $retry ~~ Str or $retry ~~ RetryMode {
+            $retry = Retry.new(:mode($retry));
+        } else {
+            $retry = Retry.new(|$retry); # good luck?
+        }
+
+        self.bless(:&code, :$retry, :$timeout, :$signal);
     }
 
-    method start(Timeout:D: |c) {
-    # WIP
-    #    return Promise.anyof(
-    #        $!subpromise = callsame,
-    #        Promise.in(self.timeout).then: {
-    #            unless $!subpromise { self.kill;
-    #            }
-    #        }
-    #    );
-    #method execute(&code, :@exceptions, :$signal='HUP') {
-    #    loop {
-    #        my $code-proc = start(:&code);
-    #        my $pause = Promise.in(self.pause).then: {
-    #            $proc.kill
-    #    }
-    #}
+    method await(Timeout:D:) { await self.start }
+
+    method start(Timeout:D:) {
+        my $codepromise = start {&!code()};
+        my $timepromise = $!timeout.defined ?? Promise.in($!timeout)
+            !! Promise.new;
+
+        sub retry($result) {
+            if $!retry {
+                my $pause = $!retry.pause;
+                return $pause if Retry.ran-out($pause);
+                sleep $pause;
+                # Fingers crossed for tail recursion...
+                return self.await;
+            } else {
+                return $result;
+            }
+        }
+
+        Promise.anyof($codepromise, $timepromise).then({
+            if $codepromise.status eqv PromiseStatus::Kept {
+                if not $codepromise.result {
+                    retry($codepromise.result);
+                } else {
+                    # XXX This fails. There does not appear to be a way
+                    # to force the execution of a thread to stop...
+                    # So much for timeouts!
+                    $codepromise.kill($!signal);
+                    $codepromise.result;
+                }
+            } else {
+                retry(Nil);
+            }
+        });
     }
+}
+
+sub timeout(&code, :$timeout, :$retry, :$signal='HUP') is export {
+    Timeout.new(&code, :$timeout, :$retry, :$signal).await;
 }
