@@ -6,12 +6,7 @@ Async::Timeouts - A library of tools for managing timeouts and retries
 
 ```perl6
 use Async::Timeouts;
-Timeout(:retry(
-	Retry.new(
-		:mode(RetryMode::exponential),
-		:max-attempts=5)).timeout({
-			get("http://example.com/") or die;
-	});
+timeout({...}, :timeout<3>, :retry<exponential>);
 ```
 
 ... much more to come ...
